@@ -6,8 +6,8 @@ use crate::{
 };
 
 use byteorder::{BigEndian, ReadBytesExt};
-use hidapi_rusb::{DeviceInfo, HidApi, HidDevice};
-use once_cell::sync::Lazy;
+use hidapi::{DeviceInfo, HidApi, HidDevice};
+// use once_cell::sync::Lazy;
 use std::{
     io::Cursor,
     sync::{Mutex, MutexGuard},
@@ -25,9 +25,14 @@ const LEDGER_PACKET_WRITE_SIZE: u8 = 65;
 const LEDGER_PACKET_READ_SIZE: u8 = 64;
 const LEDGER_TIMEOUT: i32 = 10_000_000;
 
-/// The HID API instance.
-pub static HIDAPI: Lazy<HidApi> =
-    Lazy::new(|| HidApi::new().expect("Failed to initialize HID API"));
+// /// The HID API instance.
+// pub static HIDAPI: Lazy<HidApi> =
+//     Lazy::new(|| HidApi::new().expect("Failed to initialize HID API"));
+
+lazy_static::lazy_static! {
+    /// The HID API instance.
+    static ref HIDAPI: Mutex<HidApi> = Mutex::new(HidApi::new().expect("Failed to initialize HID API"));
+}
 
 /// Native HID transport for Ledger Nano hardware wallets
 pub struct TransportNativeHID {
@@ -55,6 +60,7 @@ fn list_ledgers(api: &HidApi) -> impl Iterator<Item = &DeviceInfo> {
     api.device_list().filter(|dev| is_ledger(dev))
 }
 
+/// open the first available Ledger
 #[tracing::instrument(skip_all, err)]
 fn first_ledger(api: &HidApi) -> Result<HidDevice, NativeTransportError> {
     let device = list_ledgers(api)
@@ -203,6 +209,7 @@ fn open_device(api: &HidApi, device: &DeviceInfo) -> Result<HidDevice, NativeTra
     let device = device
         .open_device(api)
         .map_err(NativeTransportError::CantOpen)?;
+
     let _ = device.set_blocking_mode(true);
 
     Ok(device)
@@ -218,9 +225,11 @@ impl TransportNativeHID {
 
     /// Open all ledger devices.
     pub fn open_all_devices() -> Result<Vec<Self>, NativeTransportError> {
-        let api = &HIDAPI;
-        let devices = list_ledgers(api)
-            .map(|dev| open_device(api, dev))
+        let api = HIDAPI
+            .lock()
+            .map_err(|_| NativeTransportError::HidApiBusy)?;
+        let devices = list_ledgers(&api)
+            .map(|dev| open_device(&api, dev))
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(devices.into_iter().map(Self::from_device).collect())
@@ -232,7 +241,9 @@ impl TransportNativeHID {
     /// Opening the same device concurrently will lead to device lock after the first handle is closed
     /// see [issue](https://github.com/ruabmbua/hidapi-rs/issues/81)
     pub fn new() -> Result<Self, NativeTransportError> {
-        let api = &HIDAPI;
+        let mut api = HIDAPI
+            .lock()
+            .map_err(|_| NativeTransportError::HidApiBusy)?;
 
         #[cfg(target_os = "android")]
         {
@@ -252,7 +263,9 @@ impl TransportNativeHID {
             }
         }
 
-        first_ledger(api).map(Self::from_device)
+        // refresh device list
+        api.refresh_devices().map_err(NativeTransportError::Hid)?;
+        first_ledger(&api).map(Self::from_device)
     }
 
     /// Get manufacturer string. Returns None on error, or on no string.

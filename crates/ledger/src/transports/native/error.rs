@@ -18,7 +18,7 @@ pub enum NativeTransportError {
     DeviceNotFound,
     /// Device open error.
     #[error("Error opening device. {0}. Hint: This usually means that the device is already in use by another transport instance.")]
-    CantOpen(hidapi_rusb::HidError),
+    CantOpen(hidapi::HidError),
     /// SequenceMismatch
     #[error("Sequence mismatch. Got {got} from device. Expected {expected}")]
     SequenceMismatch {
@@ -38,7 +38,7 @@ pub enum NativeTransportError {
     Io(#[from] std::io::Error),
     /// HID error
     #[error(transparent)]
-    Hid(#[from] hidapi_rusb::HidError),
+    Hid(#[from] hidapi::HidError),
     /// UT8F error
     #[error(transparent)]
     UTF8(#[from] std::str::Utf8Error),
@@ -47,4 +47,8 @@ pub enum NativeTransportError {
     /// by non-android users
     #[error("Invalid TERMUX_USB_FD variable. Are you using termux-usb?")]
     InvalidTermuxUsbFd,
+
+    /// trying to get hidapi mutex lock
+    #[error("Hid Api exclusive get failed, may be busy at other task")]
+    HidApiBusy,
 }
